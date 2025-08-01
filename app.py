@@ -3,6 +3,7 @@ from flask import Flask, redirect, url_for, session, request, render_template
 from flask_session import Session
 import requests
 from dotenv import load_dotenv
+import sqlite3
 
 load_dotenv()
 
@@ -56,11 +57,38 @@ def callback():
         headers={"Authorization": f"Bearer {access_token}"}
     ).json()
 
+    user_id = user_data["id"]
+
+    # GUILD nickname çekmek için Bot kullanıyoruz
+    bot_headers = {
+        "Authorization": f"Bot {os.getenv('DISCORD_BOT_TOKEN')}"
+    }
+
+    guild_id = os.getenv("GUILD_ID")
+    member_data = requests.get(
+        f"https://discord.com/api/guilds/{guild_id}/members/{user_id}",
+        headers=bot_headers
+    )
+
+    if member_data.status_code == 200:
+        nickname = member_data.json().get("nick") or user_data["username"]
+    else:
+        nickname = user_data["username"]
+
     session["user"] = {
         "username": f'{user_data["username"]}#{user_data["discriminator"]}',
-        "id": user_data["id"],
-        "avatar": f'https://cdn.discordapp.com/avatars/{user_data["id"]}/{user_data["avatar"]}.png'
+        "id": user_id,
+        "avatar": f'https://cdn.discordapp.com/avatars/{user_id}/{user_data["avatar"]}.png'
     }
+
+    # SQL kaydı (sadece bir kere kaydet)
+    with sqlite3.connect("database.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT UNIQUE, username TEXT)")
+        cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        if cursor.fetchone() is None:
+            cursor.execute("INSERT INTO users (user_id, username) VALUES (?, ?)", (user_id, nickname))
+            conn.commit()
 
     return redirect(url_for("home"))
 
