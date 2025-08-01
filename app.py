@@ -1,25 +1,34 @@
 import os
+import sqlite3
+import requests
 from flask import Flask, redirect, url_for, session, request, render_template
 from flask_session import Session
-import requests
 from dotenv import load_dotenv
-import sqlite3
 
+# Ortam değişkenlerini yükle
 load_dotenv()
 
+# Flask ayarları
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY")
 app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
 
+# Discord OAuth2 ayarları
 CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
+GUILD_ID = os.getenv("GUILD_ID")
 
 API_BASE_URL = "https://discord.com/api"
 OAUTH_AUTHORIZE_URL = f"{API_BASE_URL}/oauth2/authorize"
 OAUTH_TOKEN_URL = f"{API_BASE_URL}/oauth2/token"
 USER_API_URL = f"{API_BASE_URL}/users/@me"
+
+# Veritabanı dosya yolu
+db_folder = "veritabani"
+db_path = os.path.join(db_folder, "database.db")
+os.makedirs(db_folder, exist_ok=True)
 
 @app.route("/")
 def home():
@@ -59,14 +68,13 @@ def callback():
 
     user_id = user_data["id"]
 
-    # GUILD nickname çekmek için Bot kullanıyoruz
+    # Bot ile sunucudan nickname çek
     bot_headers = {
         "Authorization": f"Bot {os.getenv('DISCORD_BOT_TOKEN')}"
     }
 
-    guild_id = os.getenv("GUILD_ID")
     member_data = requests.get(
-        f"https://discord.com/api/guilds/{guild_id}/members/{user_id}",
+        f"https://discord.com/api/guilds/{GUILD_ID}/members/{user_id}",
         headers=bot_headers
     )
 
@@ -81,10 +89,16 @@ def callback():
         "avatar": f'https://cdn.discordapp.com/avatars/{user_id}/{user_data["avatar"]}.png'
     }
 
-    # SQL kaydı (sadece bir kere kaydet)
-    with sqlite3.connect("database.db") as conn:
+    # Veritabanına kullanıcıyı ekle
+    with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT UNIQUE, username TEXT)")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT UNIQUE,
+                username TEXT
+            )
+        """)
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         if cursor.fetchone() is None:
             cursor.execute("INSERT INTO users (user_id, username) VALUES (?, ?)", (user_id, nickname))
@@ -97,5 +111,7 @@ def logout():
     session.pop("user", None)
     return redirect(url_for("home"))
 
+# Flask başlangıç
 if __name__ == "__main__":
-    app.run(debug=True)
+    from os import environ
+    app.run(host="0.0.0.0", port=int(environ.get("PORT", 5000)), debug=True)
